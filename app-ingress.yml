@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    kubernetes.io/ingress.class: 'traefik'
+    cert-manager.io/cluster-issuer: 'letsencrypt-prod'
+    traefik.ingress.kubernetes.io/redirect-entry-point: https
+  name: nginx
+spec:
+  rules:
+    - host: nginx.demo.livefun.dev
+      http:
+        paths:
+          - path: '/'
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - nginx.demo.livefun.dev
+      secretName: nginx.demo.livefun.dev-tls
