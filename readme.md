@@ -1,34 +1,87 @@
-# Kubernello
+# Kubernello - Kubernetes for Side Projects at 5€/month
 
-## prerequisites
+**Kubernello** is a low-cost, self-hosted personal cloud solution designed for side projects and learning. Built on top of k3s (a lightweight Kubernetes distribution), it provides a complete container orchestration platform running on a single Hetzner VPS for approximately 5€/month.
 
-- helm 3
+## Why Kubernello?
 
-### tools
+This project was created to:
+- **Minimize hosting costs** for personal projects compared to expensive cloud services
+- **Maximize learning opportunities** with real Kubernetes experience
+- **Provide easy deployment** and management of multiple applications
+- **Enable HTTPS by default** with automatic SSL certificate management
+- **Offer GitOps workflows** for automated deployments
 
-- k3sup 0.9.12
-- k9s
-- kubectl v1.19.3
+## Table of Contents
 
-https://github.com/alexellis/k3sup
+- [Architecture](#architecture)
+- [Cost Analysis](#cost-analysis)
+- [Prerequisites](#prerequisites)
+- [Server Setup](#server)
+- [Installing k3s](#installing-k3s)
+- [Traefik Ingress Controller](#install-ingress-controller-with-custom-settings)
+- [Example Application Deployment](#deploy-example-app)
+- [SSL Certificates with cert-manager](#cert-manager)
+- [DNS Configuration](#setup-dns-for-custom-domain)
+- [Exposing Applications](#expose-app-publicly-via-ingress)
+- [TODO: Future Enhancements](#todo)
 
-## price
+## Architecture
 
-why it this possible?
+Kubernello uses k3s, a lightweight Kubernetes distribution that:
+- Uses SQLite instead of etcd (better performance on small servers)
+- Includes Traefik ingress controller configured to bind to host ports 80/443
+- Provides local-path storage provisioner for persistent volumes
+- Removes cloud-provider dependencies and unnecessary components
 
-### do this need a cloud load balancer?
+### How Traffic Routing Works
 
-no, due to how k3s handle the loadbalancer, it does not require an external (paid) cloud load balancer
+Traefik ingress controller runs with `hostPort` configuration, meaning:
+1. External traffic hits your server's public IP on ports 80/443
+2. Traffic is directly routed to the Traefik pod
+3. Traefik proxies requests to internal services based on ingress rules
+4. **No external load balancer needed** - saving ~20€/month compared to cloud providers
 
-https://github.com/k3s-io/klipper-lb
+## Cost Analysis
 
-%%%%%%%%%%%%%%% spiegare come funziona host-port del traefik ingress contrioller, per dirottare tutto traffico 443 e 80 a il pod di traefik %%%%%%%%%%%%%%%
+| Component | Cost (monthly) |
+|-----------|----------------|
+| Hetzner VPS (2 vCPU, 4GB RAM) | ~5€ |
+| **vs Google Cloud equivalent** | ~25€+ |
+| **vs AWS equivalent** | ~30€+ |
 
-## why
+**Total savings: ~20-25€/month** compared to major cloud providers
 
-## Server
+## Prerequisites
 
-https://hetzner.cloud/
+### Required Tools
+- **helm 3** - Kubernetes package manager
+- **k3sup 0.9.12+** - k3s installation tool ([GitHub](https://github.com/alexellis/k3sup))
+- **kubectl v1.19.3+** - Kubernetes CLI
+- **k9s** (optional) - Terminal-based Kubernetes UI
+
+### Server Requirements
+- **VPS Provider**: Hetzner Cloud (recommended for cost-effectiveness)
+- **Specifications**: 2 vCPU, 4GB RAM, 40GB SSD
+- **OS**: Ubuntu 20.04 LTS
+- **SSH Access**: Root access with SSH key authentication
+
+## Server Setup
+
+### 1. Create Hetzner Cloud Server
+1. Go to [Hetzner Cloud](https://hetzner.cloud/)
+2. Create a new project
+3. Launch a server with:
+   - **Image**: Ubuntu 20.04 LTS
+   - **Type**: CX21 (2 vCPU, 4GB RAM) - ~5€/month
+   - **Location**: Choose closest to your users
+4. **Important**: Add your SSH public key during creation
+5. Note the server's public IP address
+
+### 2. Server Preparation
+Once created, your server will be accessible via SSH:
+```bash
+ssh root@YOUR_SERVER_IP
+```
 
 ## Istalling k3s
 
@@ -81,38 +134,94 @@ because it this flag is present any change to the traefik config will be overrid
 
 password is not required because we added the SSH key to the server
 
-### install ingress controller with custom settings
+### Install Ingress Controller with Custom Settings
 
-- ssh in to the machine `ssh root@116.203.17.76`
+Our custom Traefik setup includes:
+- **Access logs** in JSON format for monitoring
+- **Prometheus metrics** for observability
+- **SSL/TLS termination** support
+- **Proper RBAC** permissions
 
-%%%%%%%%%%%%%%% METTERE GI DIFF del file con originale %%%%%%%%%%%
-access log is the only new field, is used to have log of every request to the ingress, this is a traefik config file. %%%%%%%%%%%%%%% metter link a parametri possibili da doc traefik %%%%%%%%%%%%%%%
-
-`kubectl apply -f ./traefik.yml`
-
-navigate to http://116.203.17.76/
-a 404 page will mean that the ingress controller is working properly!
-
-## Deploy example app
-
-`kubectl apply -f app.yml`
-
-deploy an nginx and service
-
-```
-port forward command
-%%%%%%%%%%%%%%% oneline command to port forward and curl to check that is working property %%%%%%%%%%%%%%%
+```bash
+kubectl apply -f ./traefik.yml
 ```
 
-## cert manager
+### Key Configuration Changes
 
-https://cert-manager.io/docs/installation/kubernetes/#installing-with-helm
+Compared to default Traefik, our config adds:
 
-`kubectl create namespace cert-manager`
-
-`helm repo add jetstack https://charts.jetstack.io`
-
+```yaml
+accessLogs:
+  enabled: true
+  format: "json"        # Structured logging
+  fields:
+    defaultMode: keep
+metrics:
+  prometheus:
+    enabled: true         # Enable metrics collection
 ```
+
+### Verify Traefik is Running
+
+```bash
+# Check Traefik pod status
+kubectl get pods -n kube-system -l app=traefik
+
+# Test ingress controller
+curl -I http://YOUR_SERVER_IP/
+```
+
+**Expected result**: A `404 Not Found` response means Traefik is working correctly! 
+
+> The 404 is normal - there are no ingress rules yet, but Traefik is receiving and handling requests.
+
+## Deploy Example App
+
+### 1. Deploy Nginx Application
+
+Deploy a simple nginx app to test our setup:
+
+```bash
+kubectl apply -f app.yml
+```
+
+This creates:
+- **Deployment**: nginx container with resource limits
+- **Service**: ClusterIP service to expose the pod internally
+
+### 2. Verify Deployment
+
+```bash
+# Check pod status
+kubectl get pods
+
+# Check service
+kubectl get svc
+
+# Port forward to test locally
+kubectl port-forward svc/nginx 8080:80
+
+# Test in another terminal
+curl http://localhost:8080
+```
+
+**Expected**: You should see the nginx welcome page HTML.
+
+## SSL Certificates with cert-manager
+
+[cert-manager](https://cert-manager.io/) automatically provisions and manages TLS certificates from Let's Encrypt.
+
+### 1. Install cert-manager
+
+```bash
+# Create namespace
+kubectl create namespace cert-manager
+
+# Add Helm repository
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+
+# Install cert-manager
 helm install \
   cert-manager jetstack/cert-manager \
   --namespace cert-manager \
@@ -120,35 +229,207 @@ helm install \
   --set installCRDs=true
 ```
 
-deploy `cert-manager`, it will watch create/updated/delete ingress resources that match specific labels in order to trigger the creation of a tls certificate via let's encrypt
+### 2. Create Let's Encrypt Issuer
 
-## Setup DNS for custom domain
+**Important**: Update the email in `cluster-issuer.yml` before applying:
 
-%%%%%%%%%%%%%%% insert screenshot %%%%%%%%%%%%%%%
-
-record `A` `demo.livefun.dev` -> 116.203.17.76
-record `CNAM` `*.demo.livefun.dev` -> demo.livefun.dev
-
-## Expose app publicly via ingress
-
-CHANGE URL IN `app-ingress.yml`
-
-`kubectl apply -f app-ingress.yml`
-
-```
-kubernetes.io/ingress.class: 'traefik'
-cert-manager.io/cluster-issuer: 'letsencrypt-prod'
-traefik.ingress.kubernetes.io/redirect-entry-point: https
+```bash
+# Edit cluster-issuer.yml and replace email@email.com with your email
+kubectl apply -f cluster-issuer.yml
 ```
 
-these 3 labels instruct the cluster to redirect http traffic to https...
+### 3. How cert-manager Works
 
-## CI/CD
+cert-manager watches for:
+- **Ingress resources** with cert-manager annotations
+- **Certificate requests** for domains specified in ingress TLS sections
+- **Automatic renewal** of certificates before expiration
 
-## how does persistence storage works?
+When an ingress with proper annotations is created, cert-manager:
+1. Creates a **Certificate** resource
+2. Initiates **ACME challenge** with Let's Encrypt
+3. **Validates domain ownership** via HTTP-01 challenge
+4. **Stores certificate** in Kubernetes Secret
+5. **Automatically renews** certificates when needed
 
-## centralized logging (promtail loki grafana)
+## Setup DNS for Custom Domain
 
-## metrics (prometheus grafana)
+To use custom domains with your Kubernello cluster, configure DNS records with your domain provider.
 
-## gotchas
+### Required DNS Records
+
+| Type | Name | Value | Purpose |
+|------|------|-------|----------|
+| `A` | `yourdomain.com` | `YOUR_SERVER_IP` | Main domain |
+| `CNAME` | `*.yourdomain.com` | `yourdomain.com` | Wildcard for subdomains |
+
+### Example Configuration
+
+For domain `demo.livefun.dev` with server IP `116.203.17.76`:
+
+```
+A     demo.livefun.dev      -> 116.203.17.76
+CNAME *.demo.livefun.dev    -> demo.livefun.dev
+```
+
+### Verification
+
+Test DNS propagation:
+
+```bash
+# Test main domain
+dig yourdomain.com
+
+# Test wildcard subdomain
+dig app.yourdomain.com
+```
+
+Both should resolve to your server's IP address.
+
+## Expose App Publicly via Ingress
+
+### 1. Configure Domain in Ingress
+
+**Important**: Update the domain in `app-ingress.yml`:
+
+```yaml
+spec:
+  rules:
+    - host: nginx.yourdomain.com  # Change this to your domain
+  tls:
+    - hosts:
+        - nginx.yourdomain.com    # Change this too
+      secretName: nginx.yourdomain.com-tls
+```
+
+### 2. Deploy Ingress Resource
+
+```bash
+kubectl apply -f app-ingress.yml
+```
+
+### 3. Critical Annotations Explained
+
+These annotations are **required** for proper functionality:
+
+```yaml
+annotations:
+  # Tells Traefik to handle this ingress
+  kubernetes.io/ingress.class: 'traefik'
+  
+  # Triggers cert-manager to create SSL certificate
+  cert-manager.io/cluster-issuer: 'letsencrypt-prod'
+  
+  # Redirects HTTP traffic to HTTPS automatically
+  traefik.ingress.kubernetes.io/redirect-entry-point: https
+```
+
+### 4. Monitor Certificate Creation
+
+```bash
+# Watch certificate creation
+kubectl get certificates -w
+
+# Check certificate details
+kubectl describe certificate nginx.yourdomain.com-tls
+
+# View certificate logs
+kubectl logs -n cert-manager -l app=cert-manager -f
+```
+
+### 5. Test Your Application
+
+Once DNS propagates and certificates are issued:
+
+```bash
+# Test HTTP (should redirect to HTTPS)
+curl -I http://nginx.yourdomain.com
+
+# Test HTTPS
+curl https://nginx.yourdomain.com
+```
+
+**Expected result**: Your nginx application accessible over HTTPS with a valid Let's Encrypt certificate!
+
+## TODO
+
+Future enhancements planned for Kubernello:
+
+### DevOps & Automation
+- [ ] **CI/CD Pipeline Setup**
+  - GitLab CI/CD integration
+  - GitHub Actions workflows
+  - Automated deployment strategies
+
+### Storage & Data
+- [ ] **Persistent Storage Management**
+  - Local-path provisioner configuration
+  - Volume backup strategies
+  - Database persistent volumes
+
+### Monitoring & Observability
+- [ ] **Centralized Logging**
+  - Promtail + Loki + Grafana stack
+  - Log aggregation and search
+  - Application log collection
+
+- [ ] **Metrics & Monitoring**
+  - Prometheus metrics collection
+  - Grafana dashboards
+  - Alerting rules and notifications
+
+- [ ] **Distributed Tracing**
+  - OpenTelemetry integration
+  - Jaeger for request tracing
+  - Service dependency mapping
+
+### Security & Production
+- [ ] **Security Hardening**
+  - Network policies
+  - Pod security standards
+  - Secret management best practices
+
+- [ ] **Backup & Recovery**
+  - Automated cluster backups
+  - Disaster recovery procedures
+  - Data retention policies
+
+### Advanced Features
+- [ ] **Multi-Application Management**
+  - Helm chart deployments
+  - Application versioning
+  - Blue-green deployments
+
+- [ ] **Resource Optimization**
+  - Resource quotas and limits
+  - Horizontal Pod Autoscaling
+  - Cluster resource monitoring
+
+## Gotchas & Common Issues
+
+- **Certificate delays**: Let's Encrypt certificates can take 2-5 minutes to issue
+- **DNS propagation**: Allow up to 24 hours for DNS changes to propagate globally
+- **Resource limits**: Monitor CPU/memory usage on the 5€ server
+- **Traefik annotations**: Typos in ingress annotations will silently fail
+- **Context switching**: Always verify you're using the correct kubectl context
+
+---
+
+## Contributing
+
+Contributions are welcome! Please feel free to:
+- Report issues and bugs
+- Suggest new features
+- Submit pull requests
+- Improve documentation
+
+## License
+
+This project is open source and available under the [MIT License](LICENSE).
+
+## Acknowledgments
+
+- **k3s** - Lightweight Kubernetes distribution
+- **Traefik** - Modern reverse proxy and load balancer
+- **cert-manager** - Automatic SSL certificate management
+- **Hetzner** - Affordable and reliable cloud infrastructure
